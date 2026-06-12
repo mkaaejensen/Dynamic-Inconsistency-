@@ -1,0 +1,61 @@
+Implementation Details of CMA-ES with Fixed Region Handling
+
+The implementation uses CMA-ES (Covariance Matrix Adaptation Evolution Strategy) to minimize the loss while 
+keeping values below sm at the dynamically consistent solution (dyncon). The algorithm operates on a grid of points spanning [a,b] with threshold value sm demarcating regions with different treatment. 
+Region Handling and Value Preservation
+
+The algorithm partitions the state space into two regions:
+- Fixed region: Points where G_j <= sm
+- Active region: Points where G_j > sm
+
+Values in the fixed region are preserved throughout the optimization process:
+
+1. Initialization: All points in the fixed region are initialized with corresponding dyncon values:
+   if ~isempty(sm) && ~isempty(dyncon) && sm > a
+       below_sm_idx = (G <= sm);
+       opts(below_sm_idx) = dyncon(below_sm_idx);
+   end
+
+2. Candidate Evaluation: The algorithm evaluates candidate solutions by preserving fixed values using the preserveFixed() function:
+   result = preserveFixed(candidate, original, active_idx)
+   This function replaces all values at indices where ~active_idx (points in fixed region) with the corresponding original values, ensuring the fixed region remains unaltered during evaluation.
+
+3. Optimization Process: Throughout the optimization, the CMA-ES operates effectively on a reduced parameter space, focusing only on the active region. The parameter encoding and decoding functions (transformCandidate and approximateInverseTransform) apply to the entire vector, but the preservation mechanism ensures that:
+   - Values below sm are consistently replaced with the original values
+   - The loss function ignores contributions from the fixed region
+
+4. Parameter Updates: When updating the mean vector and covariance matrix, the full parameter vector is used for mathematical consistency, but this does not affect the fixed region values in the final solution.
+
+5. Two suitable implementations can be found in the mainscripts folder
+
+"tsa algorithm": In near-RBC models, the tsa algorithm is normally faster and is therefore preferred
+
+For each CMA-ES candidate x, the algorithm computes y = BestResponse(x), then z = BestResponse(y), and evaluates the objective at z. CMA-ES operates on candidates x but optimizes over the transformed points z.
+
+Best response operators produce monotone policies. Single-step best response applies BestResponse to arbitrary candidates x, which may be non-monotone. Two-step best response applies BestResponse to policies y that are already monotone, ensuring z inherits well-behaved structure. CMA-ES thus searches over monotone policies rather than the full policy space, potentially improving convergence.
+
+Please see "default algorithm" for a different way to implement monotonicity.
+
+Stall detection triggers step size reduction and covariance matrix resets (this can be disabled; the modification frequently improves convergence speed but similar mechanisms are already part of CMA-ES). Population size λ=8 with standard CMA-ES parameters. This should be increased on faster CPUs/with GPU support. 
+
+
+"default algorithm": 
+
+The algorithm uses transformation functions to ensure monotonicity in the active region while allowing an unrestricted value for the first point after sm:
+
+1. Forward Transformation (transformCandidate): Maps parameters z ∈ ℝn to decision variables x ∈ [a,b]n with monotonicity constraints.
+
+2. Inverse Transformation (approximateInverseTransform): Provides an approximation of the inverse mapping from x to z.
+
+These transformations ensure that within the active region, values maintain monotonicity, while the first point after sm remains unconstrained relative to the last point in the fixed region. This design allows a potential "jump down" in value at the boundary between regions.
+
+Restart Handling
+
+For policy improvement and restarts (when RESTART = 1 or 2), the algorithm:
+1. Computes improved values via the Lossfunction
+2. Preserves the fixed region values from the dynamically consistent solution (dyncon)
+3. Applies bounds to ensure all values remain within [a,b]
+
+The preserveFixed() function ensures that even after policy improvement steps, the fixed region values remain consistent. 
+
+6. Step length: To boost the regular CMA-ES step-length adjustments, a "stall counter" actively reduces step length when little progress is made. As this may lead to too small steps, a major stall counter resets to the initial step length if extended stall is encountered.
