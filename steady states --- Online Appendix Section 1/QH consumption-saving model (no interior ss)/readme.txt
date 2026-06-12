@@ -1,0 +1,1 @@
+This code shows how to detect that an interior steady state does not exist. See main steady state folder for additional documentation.
